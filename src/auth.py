@@ -1,15 +1,13 @@
-from typing import List, Optional, Dict
-from fastapi import FastAPI, HTTPException, status, Depends, Request
+from typing import Any, List, Optional, Dict, Union
+from fastapi import FastAPI, HTTPException, Header, status, Depends, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from passlib.hash import pbkdf2_sha256
 import jwt
+from jwt.exceptions import InvalidSignatureError, DecodeError
 
 from data import users_db, books_db
 from models import User, Book
 from app_constants import SECRET_KEY, ALGORITHM
-
-# FastAPI App instance
-app = FastAPI()
 
 # Security
 security = HTTPBasic()
@@ -23,6 +21,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     return pbkdf2_sha256.verify(plain_password, hashed_password)
 
+
 # Function to authenticate user
 def authenticate_user(username: str, password: str) -> Optional[User]:
     """
@@ -31,13 +30,16 @@ def authenticate_user(username: str, password: str) -> Optional[User]:
     Returns:
         Optional[User]: The User object if authentication is successful, None otherwise.
     """
-    if username in users_db:
-        user = users_db[username]
-        hashed_password = pbkdf2_sha256.hash(user["password"])
-        if verify_password(password, hashed_password):
-            return user
-        else:
-            return None
+    if username not in users_db:
+        return None
+
+    user = users_db[username]
+    hashed_password = pbkdf2_sha256.hash(user["password"])
+    if verify_password(password, hashed_password):
+        return user
+    else:
+        return None
+
 
 # Function to create access token
 def create_access_token(data: dict):
@@ -47,16 +49,44 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(data, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-# Dependency to get current user
-def get_current_user(credentials: HTTPBasicCredentials = Depends(security)) -> Optional[User]:
-    """
-    Get the current authenticated user.
-    :param credentials: The credentials provided by the client.
-    :return: The authenticated user object, or rais HTTPException if authentication fails.
-    """
-    username = credentials.username
-    password = credentials.password
-    user = authenticate_user(username, password)
-    if not user:
+
+# returns user if found in DB or else none
+def get_user(username: str) -> Optional[User]:
+    
+    if username not in users_db:
         return None
-    return user
+    return users_db[username]
+
+
+# Dependency to get current user
+async def get_current_user(authorization: str = Header(...)) -> Optional[User]:
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user = get_user(username)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        return user
+    except (HTTPException, InvalidSignatureError, DecodeError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

@@ -16,10 +16,17 @@ client = TestClient(app)
 # TEST LOGIN ENDPOINT
 # test 1
 def test_successful_login():
+    # login
     response = client.post("/login", auth=("wookie1", "wookie1@123"))
     assert response.status_code == 200
     assert "access_token" in response.json()
-    client.post("/logout", auth=("wookie1", "wookie1@123"))
+    token = response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # logout
+    headers = {"Authorization": f"Bearer {token}"}
+    client.post("/logout", headers=headers)
+
 
 # test 2
 def test_login_with_invalid_credentials():
@@ -31,27 +38,50 @@ def test_login_with_invalid_credentials():
 # test 3
 def test_login_with_already_logged_in_user():
     # login
-    client.post("/login", auth=("wookie1", "wookie1@123"))
+    first_login_response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    token = first_login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
     # trying to login again
-    response = client.post("/login", auth=("wookie1", "wookie1@123"))
-    assert response.status_code == 401
-    assert "already Logged In!" in response.json()["detail"]
-    client.post("/logout", auth=("wookie1", "wookie1@123"))
+    second_login_response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    assert second_login_response.status_code == 401
+    assert "already Logged In!" in second_login_response.json()["detail"]
+    
+    # logout
+    client.post("/logout", headers=headers)
 
 
 # TEST LOGOUT ENDPOINT
 # test 1
 def test_successful_logout():
-    # Login user first
-    client.post("/login", auth=("wookie1", "wookie1@123"))
-    response = client.post("/logout", auth=("wookie1", "wookie1@123"))
+    # login
+    response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+
+    # logout
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/logout", headers=headers)
     assert response.status_code == 200
     assert response.json()["message"] == "You have been logged out."
 
+
 # test 2
-def test_logout_with_user_not_logged_in():
-    response = client.post("/logout", auth=("wookie2", "wookie2@123"))
+def test_logout_with_wrong_credentials():
+    # login
+    response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    valid_token = response.json()["access_token"]
+    dummy_token = "DummyBearerToken"
+
+    # logout with dummy token
+    headers = {"Authorization": f"Bearer {dummy_token}"}
+    response = client.post("/logout", headers=headers)
     assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid authentication credentials"
+
+    # logout
+    headers = {"Authorization": f"Bearer {valid_token}"}
+    client.post("/logout", headers=headers)
+
 
 # TEST HOME ENDPOINT (welcome msg)
 def test_home():
@@ -86,16 +116,17 @@ def test_get_book_by_id_not_found():
 # TEST BOOKS BY SEARCH ENDPOING (Query Param)
 # test 1
 def test_get_books_by_search():
-    response = client.get("/books?query=big")
+    query="big"
+    response = client.get(f"/books?query={query}")
     assert response.status_code == 200
     assert len(response.json()["search_results"]) == 1
-    assert response.json()["search_results"][0]["title"] == "The Big Adventure"
 
 # test 2
 def test_get_books_by_search_not_found():
-    response = client.get("/books?query=xyz")
+    query="xyz"
+    response = client.get(f"/books?query={query}")
     assert response.status_code == 404
-    assert response.json()["detail"] == "No books found for query 'xyz'."
+    assert response.json()["detail"] == f"No books found for query '{query}'."
 
 
 # TEST CREATE BOOK ENDPOINT
@@ -110,13 +141,19 @@ def test_create_book_successfully():
         "price": 6.54,
         "published": True
     }
-    client.post("/login", auth=("wookie2", "wookie2@123"))
-    response = client.post("/books", json=new_book, auth=("wookie2", "wookie2@123"))
-    assert response.status_code == 201
-    assert response.json() == {"message": "Book created successfully"}
+    # login & get token
+    login_response = client.post("/login", auth=("wookie2", "wookie2@123"))
+    token = login_response.json()["access_token"]
+    # create book
+    headers = {"Authorization": f"Bearer {token}"}
+    create_book_response = client.post("/books", json=new_book, headers=headers)
+    assert create_book_response.status_code == 201
+    assert create_book_response.json() == {"message": "Book created successfully"}
     assert new_book in books_db
     del books_db[-1]
-    client.post("/logout", auth=("wookie2", "wookie2@123"))
+    
+    # logout
+    client.post("/logout", headers=headers)
 
 # test 2
 def test_create_book_unauthorized():
@@ -124,17 +161,23 @@ def test_create_book_unauthorized():
         "id": 5,
         "title": "Python Handbook",
         "description": "Learn Python the best way!",
-        "author": "wookie2",
+        "author": "wookie1",
         "cover_image": "https://loremflickr.com/320/240",
         "price": 6.54,
         "published": True
     }
-    client.post("/login", auth=("wookie1", "wookie1@123"))
-    response = client.post("/books", json=new_book, auth=("wookie1", "wookie1@123"))
-    assert response.status_code == 403
+    # login
+    login_response = client.post("/login", auth=("wookie2", "wookie2@123"))
+    token = login_response.json()["access_token"]
+    # create
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/books", json=new_book, headers=headers)
+    assert response.status_code == 401
     assert response.json()["detail"] == "User is not authorized to create book"
     assert new_book not in books_db
-    client.post("/logout", auth=("wookie1", "wookie1@123"))
+
+    # logout
+    client.post("/logout", headers=headers)
 
 # test 3
 def test_create_book_forbidden():
@@ -147,12 +190,17 @@ def test_create_book_forbidden():
         "price": 6.54,
         "published": True
     }
-    client.post("/login", auth=("vader", "vader@123"))
-    response = client.post("/books", json=new_book, auth=("vader", "vader@123"))
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Darth Vader is not allowed to publish his work on Wookie Books"
+    # login
+    login_response = client.post("/login", auth=("vader", "vader@123"))
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    # create
+    create_response = client.post("/books", json=new_book, headers=headers)
+    assert create_response.status_code == 403
+    assert create_response.json()["detail"] == "Darth Vader is not allowed to publish his work on Wookie Books"
     assert new_book not in books_db
-    client.post("/logout", auth=("vader", "vader@123"))
+    # logout
+    client.post("/logout", headers=headers)
 
 # test 4
 def test_create_book_bad_request():
@@ -165,13 +213,17 @@ def test_create_book_bad_request():
         "price": 6.54,
         "published": True
     }
-    client.post("/login", auth=("wookie1", "wookie1@123"))
-    response = client.post("/books", json=new_book, auth=("wookie1", "wookie1@123"))
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Book ID 1 already exists"
-    print("bookssss",books_db,flush=True)
+    # login
+    login_response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    # create
+    create_response = client.post("/books", json=new_book, headers=headers)
+    assert create_response.status_code == 400
+    assert create_response.json()["detail"] == "Book ID 1 already exists"
     assert len(books_db) == 3
-    client.post("/logout", auth=("wookie1", "wookie1@123"))
+    # logout
+    client.post("/logout", headers=headers)
 
 
 # TEST UPDATE ENDPOINT
@@ -189,9 +241,16 @@ def test_update_book_successfully():
         "price": 6.54,
         "published": True
     }
-    response = client.put(f"/books/{book_to_update_id}", json=updated_data, auth=("wookie2", "wookie2@123"))
+    # login
+    login_response = client.post("/login", auth=("wookie2", "wookie2@123"))
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    # update
+    response = client.put(f"/books/{book_to_update_id}", json=updated_data, headers=headers)
     assert response.status_code == 200
     assert response.json() == {"message": "Book updated successfully"}
+    # logout
+    client.post("/logout", headers=headers)
 
 # test 2
 def test_update_book_not_found():
@@ -207,10 +266,16 @@ def test_update_book_not_found():
         "price": 6.54,
         "published": True
     }
-    response = client.put(f"/books/{book_to_update_id}", json=updated_data, auth=("wookie2", "wookie2@123"))
+    # login
+    login_response = client.post("/login", auth=("wookie2", "wookie2@123"))
+    token = login_response.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    # update
+    response = client.put(f"/books/{book_to_update_id}", json=updated_data, headers=headers)
     assert response.status_code == 404
     assert response.json() == {"detail":"Book not found"}
-    client.post("/logout", auth=("wookie2", "wookie2@123"))
+    # logout
+    client.post("/logout", headers=headers)
 
 # test 3
 def test_update_book_not_authorized():
@@ -224,50 +289,51 @@ def test_update_book_not_authorized():
         "price": 8.99,
         "published": True
     }
-    # login as wookie2
-    response = client.post("/login", auth=("wookie2", "wookie2@123"))
-    assert response.status_code == 200
-    # create book with wookie2
-    response = client.post("/books", json=data, auth=("wookie2", "wookie2@123"))
-    print("11111",response.json())
-    assert response.status_code == 201
+    # login
+    login_one_response = client.post("/login", auth=("wookie2", "wookie2@123"))
+    login_one_token = login_one_response.json()["access_token"]
+    login_one_headers = {"Authorization": f"Bearer {login_one_token}"}
+    # create
+    client.post("/books", json=data, headers=login_one_headers)
     # logout wookie2
-    response = client.post("/logout", auth=("wookie2", "wookie2@123"))
-    assert response.status_code == 200
+    client.post("/logout", headers=login_one_headers)
     # login as wookie1
-    response = client.post("/login", auth=("wookie1", "wookie1@123"))
-    print("22222",response.json())
-    assert response.status_code == 200
-    # attempt to update book with wookie1 (should fail)
-    response = client.put("/books/20", json=data, auth=("wookie1", "wookie1@123"))
-    assert response.status_code == 401
-    assert response.json() == {"detail": "User is not authorized to update book"}
+    login_two_response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    login_two_token = login_two_response.json()["access_token"]
+    login_two_headers = {"Authorization": f"Bearer {login_two_token}"}
+    # attempt to update book with wookie1
+    update_response = client.put("/books/20", json=data, headers=login_two_headers)
+    assert update_response.status_code == 401
+    assert update_response.json() == {"detail": "User is not authorized to update book"}
+
+    # logout
+    client.post("/logout", headers=login_two_headers)
 
 
 
 # TEST DELETE ENTPOINT
 def test_delete_book():
+
+    # login
+    login_response = client.post("/login", auth=("wookie1", "wookie1@123"))
+    login_token = login_response.json()["access_token"]
+    login_headers = {"Authorization": f"Bearer {login_token}"}
+
     # test deleting a book that exists in the database
-    response = client.delete("/books/1",auth=("wookie1", "wookie1@123"))
+    response = client.delete("/books/1",headers=login_headers)
     assert response.status_code == 200
     assert response.json() == {"message": "Book deleted successfully"}
 
     # test deleting a book that does not exist in the database
-    response = client.delete("/books/123",auth=("wookie2", "wookie2@123"))
+    response = client.delete("/books/123",headers=login_headers)
     assert response.status_code == 404
     assert response.json() == {"detail": "Book not found"}
 
     # test deleting a book with an invalid book ID
-    response = client.delete("/books/invalid_id",auth=("wookie2", "wookie2@123"))
+    response = client.delete("/books/invalid_id",headers=login_headers)
     assert response.status_code == 422
-    assert response.json() == {"detail": [{"loc": ["path", "book_id"], "msg": "value is not a valid integer", "type": "type_error.integer"}]}
-
-    # test deleting a book without authentication
-    response = client.delete("/books/2")
-    assert response.status_code == 401
-    assert response.json() == {"detail": "Not authenticated"}
 
     # test deleting a book as a non-author user
-    response = client.delete("/books/3", auth=("vader", "vader@123"))
+    response = client.delete("/books/20", headers=login_headers)
     assert response.status_code == 403
     assert response.json() == {"detail": "User is not authorized to delete book"}

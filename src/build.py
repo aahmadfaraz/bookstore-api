@@ -68,19 +68,10 @@ def login(credentials: HTTPBasicCredentials = Depends(security)) -> Dict[str, st
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"{username} already Logged In!",
         )
-        
-    active_users = list(map(lambda user: user['username'], filter(lambda user: user['active'], users_db.values())))
-    if len(active_users) > 0:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"{active_users[0]} is logged In. Logout first!"
-        )
-    
-    for user in users_db.values():
-        user['active'] = False
     
     access_token = create_access_token(data={"sub": user["username"]})
     users_db[username]["active"] = True
+    # print("Access Token---> ",access_token,flush=True)
     return {"access_token": access_token}
 
 
@@ -94,19 +85,19 @@ def logout(current_user: User = Depends(get_current_user)):
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password",
-            headers={"WWW-Authenticate": "Basic"},
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if users_db[current_user["username"]]["active"] == False:
+    user = current_user['username']
+    if users_db[user]["active"] == False:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="You are not logged in.",
         )
-    
-    users_db[current_user["username"]]["active"] = False
-    return {"message": "You have been logged out."}
 
+    users_db[user]["active"] = False
+    return {"message": "You have been logged out."}
 
 
 # root/home
@@ -172,7 +163,7 @@ def create_book(book: Book, current_user: User = Depends(get_current_user)) -> J
     
     # only author can publish
     if current_user["username"] != book.author:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="User is not authorized to create book")
     
     # vader is forbidden to publish his books
